@@ -1,0 +1,83 @@
+import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import { z } from "zod";
+
+import { prisma } from "@/lib/prisma";
+
+const signupSchema = z.object({
+  email: z.string().email("メールアドレスの形式が正しくありません"),
+  password: z
+    .string()
+    .min(8, "パスワードは8文字以上にしてください"),
+  name: z
+    .string()
+    .min(1, "名前を入力してください")
+    .max(50, "名前は50文字以内にしてください"),
+});
+
+export async function POST(request: Request) {
+  try {
+    const body: unknown = await request.json();
+
+    const result = signupSchema.safeParse(body);
+
+    if (!result.success) {
+      return NextResponse.json(
+        {
+          message: "入力内容に問題があります",
+          errors: result.error.flatten().fieldErrors,
+        },
+        { status: 400 },
+      );
+    }
+
+    const { email, password, name } = result.data;
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        { message: "このメールアドレスは使用できません" },
+        { status: 409 },
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const user = await prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        passwordHash,
+        name: name.trim(),
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    return NextResponse.json(
+      {
+        message: "ユーザー登録が完了しました",
+        user,
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    console.error("Signup error:", error);
+
+    return NextResponse.json(
+      { message: "サーバーエラーが発生しました" },
+      { status: 500 },
+    );
+  }
+}
