@@ -3,6 +3,11 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import {
+  clearLoginFailures,
+  isLoginRateLimited,
+  recordLoginAttempt,
+} from "@/lib/rateLimit";
 
 const loginSchema = z.object({
   email: z.string().email("メールアドレスの形式が正しくありません"),
@@ -29,6 +34,27 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    const ipAddress =
+      forwardedFor?.split(",")[0]?.trim() ??
+      request.headers.get("x-real-ip") ??
+      "unknown";
+
+    const rateLimited = await isLoginRateLimited(
+      normalizedEmail,
+      ipAddress,
+    );
+
+    if (rateLimited) {
+      return NextResponse.json(
+        {
+          message:
+            "ログイン試行回数が多すぎます。1分後に再度お試しください。",
+        },
+        { status: 429 },
+      );
+    }
+
     const user = await prisma.user.findUnique({
       where: {
         email: normalizedEmail,
@@ -36,8 +62,17 @@ export async function POST(request: Request) {
     });
 
     if (!user) {
+      await recordLoginAttempt(
+        normalizedEmail,
+        ipAddress,
+        false,
+      );
+
       return NextResponse.json(
-        { message: "メールアドレスまたはパスワードが正しくありません" },
+        {
+          message:
+            "メールアドレスまたはパスワードが正しくありません",
+        },
         { status: 401 },
       );
     }
@@ -48,11 +83,31 @@ export async function POST(request: Request) {
     );
 
     if (!isPasswordValid) {
+      await recordLoginAttempt(
+        normalizedEmail,
+        ipAddress,
+        false,
+      );
+
       return NextResponse.json(
-        { message: "メールアドレスまたはパスワードが正しくありません" },
+        {
+          message:
+            "メールアドレスまたはパスワードが正しくありません",
+        },
         { status: 401 },
       );
     }
+
+    await recordLoginAttempt(
+      normalizedEmail,
+      ipAddress,
+      true,
+    );
+
+    await clearLoginFailures(
+      normalizedEmail,
+      ipAddress,
+    );
 
     const expiresAt = new Date(
       Date.now() + 24 * 60 * 60 * 1000,

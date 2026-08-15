@@ -32,3 +32,13 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
 }
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  email     String
+  ipAddress String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, ipAddress, createdAt])
+}
