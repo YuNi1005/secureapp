@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import { getPasswordStrength } from "@/lib/passwordStrength";
 
 const signupSchema = z.object({
   email: z.string().email("メールアドレスの形式が正しくありません"),
@@ -35,6 +36,18 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
+    const passwordStrength = getPasswordStrength(password);
+
+    if (passwordStrength === "WEAK") {
+      return NextResponse.json(
+        {
+          message:
+            "パスワードが弱すぎます。12文字以上で、大文字・小文字・数字・記号を組み合わせてください。",
+        },
+        { status: 400 },
+      );
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: {
         email: normalizedEmail,
@@ -43,7 +56,9 @@ export async function POST(request: Request) {
 
     if (existingUser) {
       return NextResponse.json(
-        { message: "このメールアドレスは使用できません" },
+        {
+          message: "このメールアドレスは使用できません",
+        },
         { status: 409 },
       );
     }
@@ -76,7 +91,9 @@ export async function POST(request: Request) {
     console.error("Signup error:", error);
 
     return NextResponse.json(
-      { message: "サーバーエラーが発生しました" },
+      {
+        message: "サーバーエラーが発生しました",
+      },
       { status: 500 },
     );
   }
