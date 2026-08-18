@@ -1,20 +1,9 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { getPasswordStrength } from "@/lib/passwordStrength";
-
-const signupSchema = z.object({
-  email: z.string().email("メールアドレスの形式が正しくありません"),
-  password: z
-    .string()
-    .min(8, "パスワードは8文字以上にしてください"),
-  name: z
-    .string()
-    .min(1, "名前を入力してください")
-    .max(50, "名前は50文字以内にしてください"),
-});
+import { signupSchema } from "@/schemas/auth";
 
 export async function POST(request: Request) {
   try {
@@ -32,11 +21,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const { email, password, name } = result.data;
+    const {
+      email,
+      password,
+      name,
+    } = result.data;
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    const passwordStrength = getPasswordStrength(password);
+    // パスワード強度チェック
+    const passwordStrength =
+      getPasswordStrength(password);
 
     if (passwordStrength === "WEAK") {
       return NextResponse.json(
@@ -57,13 +52,17 @@ export async function POST(request: Request) {
     if (existingUser) {
       return NextResponse.json(
         {
-          message: "このメールアドレスは使用できません",
+          message:
+            "このメールアドレスは使用できません",
         },
         { status: 409 },
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(
+      password,
+      12,
+    );
 
     const user = await prisma.user.create({
       data: {
@@ -80,13 +79,20 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         message: "ユーザー登録が完了しました",
         user,
       },
       { status: 201 },
     );
+
+    response.headers.set(
+      "Cache-Control",
+      "no-store",
+    );
+
+    return response;
   } catch (error) {
     console.error("Signup error:", error);
 

@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import { loginSchema } from "@/schemas/auth";
 import {
   clearLoginFailures,
   isLoginRateLimited,
   recordLoginAttempt,
 } from "@/lib/rateLimit";
-
-const loginSchema = z.object({
-  email: z.string().email("メールアドレスの形式が正しくありません"),
-  password: z.string().min(1, "パスワードを入力してください"),
-});
 
 export async function POST(request: Request) {
   try {
@@ -35,6 +30,7 @@ export async function POST(request: Request) {
     const normalizedEmail = email.trim().toLowerCase();
 
     const forwardedFor = request.headers.get("x-forwarded-for");
+
     const ipAddress =
       forwardedFor?.split(",")[0]?.trim() ??
       request.headers.get("x-real-ip") ??
@@ -46,13 +42,18 @@ export async function POST(request: Request) {
     );
 
     if (rateLimited) {
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           message:
             "ログイン試行回数が多すぎます。1分後に再度お試しください。",
         },
         { status: 429 },
       );
+
+      response.headers.set("Retry-After", "60");
+      response.headers.set("Cache-Control", "no-store");
+
+      return response;
     }
 
     const user = await prisma.user.findUnique({
@@ -109,10 +110,7 @@ export async function POST(request: Request) {
       ipAddress,
     );
 
-    const expiresAt = new Date(
-      Date.now() + 24 * 60 * 60 * 1000,
-    );
-
+    // 期限切れSessionを削除
     await prisma.session.deleteMany({
       where: {
         expiresAt: {
@@ -121,6 +119,7 @@ export async function POST(request: Request) {
       },
     });
 
+    // 同一ユーザーの有効Sessionを取得
     const activeSessions = await prisma.session.findMany({
       where: {
         userId: user.id,
@@ -133,9 +132,12 @@ export async function POST(request: Request) {
       },
     });
 
+    // 最大5Sessionまで
     if (activeSessions.length >= 5) {
-      const sessionsToDelete =
-        activeSessions.slice(0, activeSessions.length - 4);
+      const sessionsToDelete = activeSessions.slice(
+        0,
+        activeSessions.length - 4,
+      );
 
       if (sessionsToDelete.length > 0) {
         await prisma.session.deleteMany({
@@ -148,7 +150,12 @@ export async function POST(request: Request) {
           },
         });
       }
-    } 
+    }
+
+    const expiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000,
+    );
+
     const session = await prisma.session.create({
       data: {
         userId: user.id,
@@ -174,12 +181,19 @@ export async function POST(request: Request) {
       path: "/",
     });
 
+    response.headers.set(
+      "Cache-Control",
+      "no-store",
+    );
+
     return response;
   } catch (error) {
     console.error("Login error:", error);
 
     return NextResponse.json(
-      { message: "サーバーエラーが発生しました" },
+      {
+        message: "サーバーエラーが発生しました",
+      },
       { status: 500 },
     );
   }
