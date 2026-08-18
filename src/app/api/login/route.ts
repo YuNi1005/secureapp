@@ -113,6 +113,42 @@ export async function POST(request: Request) {
       Date.now() + 24 * 60 * 60 * 1000,
     );
 
+    await prisma.session.deleteMany({
+      where: {
+        expiresAt: {
+          lt: new Date(),
+        },
+      },
+    });
+
+    const activeSessions = await prisma.session.findMany({
+      where: {
+        userId: user.id,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    if (activeSessions.length >= 5) {
+      const sessionsToDelete =
+        activeSessions.slice(0, activeSessions.length - 4);
+
+      if (sessionsToDelete.length > 0) {
+        await prisma.session.deleteMany({
+          where: {
+            id: {
+              in: sessionsToDelete.map(
+                (session) => session.id,
+              ),
+            },
+          },
+        });
+      }
+    } 
     const session = await prisma.session.create({
       data: {
         userId: user.id,
